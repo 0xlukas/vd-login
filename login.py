@@ -35,17 +35,36 @@ def pick_device(devices):
     return out
 
 
-def handle_device_selection(page):
-    """If the Airlock device-selection page is present, pick a device and submit.
+def submit_and_settle(page, timeout=10000):
+    """Click the form's submit button and wait for the resulting page to load.
 
-    No-op if the page does not appear within a short window.
+    Returns True if a navigation completed, False if the submit didn't navigate
+    (in which case the caller can't assume the next page's DOM is present yet).
     """
     try:
-        page.wait_for_selector('input[type="radio"]', timeout=8000)
+        with page.expect_navigation(wait_until="load", timeout=timeout):
+            page.click('button[type="submit"], input[type="submit"]')
+        return True
     except PlaywrightTimeoutError:
-        return
+        return False
 
+
+def handle_device_selection(page, navigated):
+    """If the Airlock device-selection page is present, pick a device and submit.
+
+    No-op if it isn't that page. When the PIN submit navigated normally the next
+    page's DOM is already loaded, so this is an instant check with no delay for
+    single-device accounts. Only if that navigation never fired do we fall back
+    to polling, since then the page may still be rendering.
+    """
     radios = page.locator('input[type="radio"]')
+
+    if not navigated:
+        try:
+            page.wait_for_selector('input[type="radio"]', timeout=8000)
+        except PlaywrightTimeoutError:
+            return
+
     count = radios.count()
     if count == 0:
         return
@@ -114,10 +133,10 @@ def main():
         page.fill('input[name="pin"], input[type="password"]', PIN)
 
         print("Submitting...")
-        page.click('button[type="submit"], input[type="submit"]')
+        navigated = submit_and_settle(page)
 
         try:
-            handle_device_selection(page)
+            handle_device_selection(page, navigated)
         except SystemExit:
             browser.close()
             raise
